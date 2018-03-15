@@ -49,5 +49,10 @@ __kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global
 	
 }
 
+__kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny)
+{
+	int i = get_global_id(0);
 
+	
+}
 
