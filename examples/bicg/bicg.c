@@ -134,7 +134,6 @@ void init_array(DATA_TYPE *A, DATA_TYPE *p, DATA_TYPE *r)
 	}
 }
 
-
 void cl_initialization()
 {	
 	// Get platform and device information
@@ -166,7 +165,6 @@ void cl_initialization()
 	clCommandQue = clCreateCommandQueue(clGPUContext, device_id, 0, &errcode);
 	if(errcode != CL_SUCCESS) printf("Error in creating command queue\n");
 }
-
 
 void cl_mem_init(DATA_TYPE* A, DATA_TYPE* r, DATA_TYPE* s, DATA_TYPE* p, DATA_TYPE* q)
 {
@@ -228,7 +226,7 @@ void cl_launch_kernel()
 	errcode |= clSetKernelArg(clKernel1, 1, sizeof(cl_mem), (void *)&p_mem_obj);
 	errcode |= clSetKernelArg(clKernel1, 2, sizeof(cl_mem), (void *)&q_mem_obj);
 	errcode |= clSetKernelArg(clKernel1, 3, sizeof(int), &nx);
-        errcode |= clSetKernelArg(clKernel1, 4, sizeof(int), &ny);
+    errcode |= clSetKernelArg(clKernel1, 4, sizeof(int), &ny);
 	if(errcode != CL_SUCCESS) printf("Error in seting arguments\n");
 
 	// Execute the 1st OpenCL kernel
@@ -244,7 +242,7 @@ void cl_launch_kernel()
 	errcode |= clSetKernelArg(clKernel2, 1, sizeof(cl_mem), (void *)&r_mem_obj);
 	errcode |= clSetKernelArg(clKernel2, 2, sizeof(cl_mem), (void *)&s_mem_obj);
 	errcode |= clSetKernelArg(clKernel2, 3, sizeof(int), &nx);
-        errcode |= clSetKernelArg(clKernel2, 4, sizeof(int), &ny);
+    errcode |= clSetKernelArg(clKernel2, 4, sizeof(int), &ny);
 	if(errcode != CL_SUCCESS) printf("Error in seting arguments\n");
 	
 	// Execute the 2nd OpenCL kernel
