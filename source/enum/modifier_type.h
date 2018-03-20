@@ -21,7 +21,9 @@ enum class ModifierType
 
     /** Parameter value affects local thread size of corresponding kernel.
       */
-    Local
+    Local,
+
+    Both
 };
 
 } // namespace ktt

@@ -100,6 +100,10 @@ KernelConfiguration KernelManager::getKernelConfiguration(const KernelId id, con
                 {
                     local.modifyByValue(parameterPair.getValue(), parameter.getModifierAction(), parameter.getModifierDimension());
                 }
+                else if (parameter.getModifierType() == ModifierType::Both) {
+                    local.modifyByValue(parameterPair.getValue(), parameter.getModifierAction(), parameter.getModifierDimension());
+                    global.modifyByValue(parameterPair.getValue(), parameter.getModifierAction(), parameter.getModifierDimension());
+                }
 
                 if (parameter.isLocalMemoryModifier())
                 {
@@ -500,6 +504,11 @@ void KernelManager::computeConfigurations(const KernelId kernelId, const size_t 
             }
             else if (parameter.getModifierType() == ModifierType::Local)
             {
+                newLocalSize.modifyByValue(value, parameter.getModifierAction(), parameter.getModifierDimension());
+            }
+            else if (parameter.getModifierType() == ModifierType::Both)
+            {
+                newGlobalSize.modifyByValue(value, parameter.getModifierAction(), parameter.getModifierDimension());
                 newLocalSize.modifyByValue(value, parameter.getModifierAction(), parameter.getModifierDimension());
             }
 
