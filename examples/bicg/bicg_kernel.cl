@@ -13,6 +13,15 @@
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
 
+// optimization for:
+// 1 -- pre-Fermi
+// 2 -- Fermi
+#define OPTIMIZE 2
+
+// process BICG_BATCH elements in thread
+//#define BICG_BATCH 8
+#define BICG_STEP 32/BICG_BATCH
+
 typedef float DATA_TYPE;
 
 __kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny) 
@@ -49,7 +58,22 @@ __kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global
 	
 }
 
-__kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny)
+inline void atomicAdd_g_f(volatile __global float *addr, float val)
+{
+	union{
+		unsigned int u32;
+		float f32;
+	} next, expected, current;
+	current.f32 = *addr;
+	do{
+		expected.f32 = current.f32;
+		next.f32 = expected.f32 + val;
+		current.u32 = atomic_cmpxchg( (volatile __global unsigned int *)addr,
+		expected.u32, next.u32);
+	} while( current.u32 != expected.u32 );
+}
+
+__kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *x1, __global DATA_TYPE *y1, __global DATA_TYPE *x2, __global DATA_TYPE *y2, int m, int n)
 {
 	/*int j = get_global_id(0);
 	int i = get_global_id(1);
@@ -119,7 +143,7 @@ __kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *p, __global D
 #endif
 		if (ty == 0) {
 #if OPTIMIZE == 2
-			atomicAdd(y2 + i + tx, tmp + s_A[tx][1]);
+			atomicAdd_g_f(y2 + i + tx, tmp + s_A[tx][1]);
 #else
 			y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
 #endif
@@ -147,7 +171,7 @@ __kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *p, __global D
 #endif
 				if (ty == 0) {
 					barrier(CLK_LOCAL_MEM_FENCE);
-					atomicAdd(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
+					atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
 				}
 #if BICG_BATCH <= 8
 			}
@@ -159,20 +183,3 @@ __kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *p, __global D
 	}
 #endif
 }
-
-}
-
-// Setup the execution configuration
-size_t cl_DimBlock[2], cl_DimGrid[2];
-cl_DimBlock[0] = TILE_WIDTH;
-cl_DimBlock[1] = TILE_WIDTH;
-cl_DimGrid[0] = Width;
-cl_DimGrid[1] = Width;
-clSetKernelArg(clkern, 0, sizeof(cl_mem), (void*)(&deviceP));
-clSetKernelArg(clkern, 1, sizeof(cl_mem), (void*)(&deviceM));
-clSetKernelArg(clkern, 2, sizeof(cl_mem), (void*)(&deviceN));
-clSetKernelArg(clkern, 3, sizeof(int), (void *)(&Width));
-// Launch the device kernel
-clEnqueueNDRangeKernel(clcmdque, clkern, 2, NULL,
-	cl_DimGrid, cl_DimBlock, 0, NULL,
-	&DeviceDone);

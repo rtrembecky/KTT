@@ -53,14 +53,17 @@ int main(int argc, char** argv)
         }
     }
 
+	int by = NX/256;
+
     // Declare kernel parameters
-    const ktt::DimensionVector ndRangeDimensions(256, 256);
-    const ktt::DimensionVector workGroupDimensions;
-    const ktt::DimensionVector referenceWorkGroupDimensions(16, 16);
+    const ktt::DimensionVector ndRangeDimensions(NY, by*32);
+    const ktt::DimensionVector referenceNdRangeDimensions(NY, by*32/8);
+    const ktt::DimensionVector workGroupDimensions(32, 32);
+    const ktt::DimensionVector referenceWorkGroupDimensions(32, 32/8);
 
     // Declare data variables
     //float gridSpacing = 0.5f;
-    std::vector<float> A(NX * NY * sizeof(DATA_TYPE));
+    std::vector<float> A(NX * NY);
     std::vector<float> x1(NY);
     std::vector<float> x2(NX);
     std::vector<float> y1(NX, 0.0f);
@@ -74,40 +77,37 @@ int main(int argc, char** argv)
 	for(int j = 0; j < NY; j++)
 		x1[j] = distribution(engine);
 
-    for (int i = 0; i < NX; i++) {
+    	for (int i = 0; i < NX; i++) {
 		x2[i] = distribution(engine);
-		for (j = 0; j < NY; j++)
+		for (int j = 0; j < NY; j++)
 			A[i*NY + j] = distribution(engine);
-    }
+	}
 
     // Create tuner object for specified platform and device
     ktt::Tuner tuner(platformIndex, deviceIndex);
 
     // Add two kernels to tuner, one of the kernels acts as reference kernel
     ktt::KernelId kernelId = tuner.addKernelFromFile(kernelFile, "bicgFused", ndRangeDimensions, workGroupDimensions);
-    ktt::KernelId referenceKernelId = tuner.addKernelFromFile(referenceKernelFile, "bicgFusedRef", ndRangeDimensions,
-        referenceWorkGroupDimensions);
+    ktt::KernelId referenceKernelId = tuner.addKernelFromFile(referenceKernelFile, "bicgFusedRef", referenceNdRangeDimensions, referenceWorkGroupDimensions);
 
     // Add several parameters to tuned kernel, some of them utilize constraint function and thread modifiers
     //tuner.addParameter(kernelId, "INNER_UNROLL_FACTOR", std::vector<size_t>{0, 1, 2, 4, 8, 16, 32});
     //tuner.addParameter(kernelId, "USE_CONSTANT_MEMORY", std::vector<size_t>{0, 1});
     //tuner.addParameter(kernelId, "VECTOR_TYPE", std::vector<size_t>{1, 2, 4, 8});
     //tuner.addParameter(kernelId, "USE_SOA", std::vector<size_t>{0, 1, 2});
-	tuner.addParameter(kernelId, "BICG_BATCH", std::vector<size_t>{1, 2, 4, 8});
+	tuner.addParameter(kernelId, "BICG_BATCH", std::vector<size_t>{1, 2, 4, 8}, ktt::ModifierType::Both, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
+	//tuner.addParameter(kernelId, "BICG_BATCH", std::vector<size_t>{8});
 
     // Using vectorized SoA only makes sense when vectors are longer than 1
     /*auto vectorizedSoA = [](std::vector<size_t> vector) {return vector.at(0) > 1 || vector.at(1) != 2;}; 
     tuner.addConstraint(kernelId, vectorizedSoA, std::vector<std::string>{"VECTOR_TYPE", "USE_SOA"});*/
 
     // Divide NDRange in dimension x by OUTER_UNROLL_FACTOR
-    //tuner.addParameter(kernelId, "OUTER_UNROLL_FACTOR", std::vector<size_t>{1, 2, 4, 8}, ktt::ModifierType::Global, ktt::ModifierAction::Divide,
-        //ktt::ModifierDimension::X);
+    //tuner.addParameter(kernelId, "OUTER_UNROLL_FACTOR", std::vector<size_t>{1, 2, 4, 8}, ktt::ModifierType::Global, ktt::ModifierAction::Divide, ktt::ModifierDimension::X);
 
     // Multiply workgroup size in dimensions x and y by two parameters that follow (effectively setting workgroup size to parameters' values)
-    //tuner.addParameter(kernelId, "WORK_GROUP_SIZE_X", std::vector<size_t>{4, 8, 16, 32}, ktt::ModifierType::Local, ktt::ModifierAction::Multiply,
-    //    ktt::ModifierDimension::X);
-    //tuner.addParameter(kernelId, "WORK_GROUP_SIZE_Y", std::vector<size_t>{1, 2, 4, 8, 16, 32}, ktt::ModifierType::Local,
-    //    ktt::ModifierAction::Multiply, ktt::ModifierDimension::Y);
+    //tuner.addParameter(kernelId, "WORK_GROUP_SIZE_X", std::vector<size_t>{4, 8, 16, 32}, ktt::ModifierType::Local, ktt::ModifierAction::Multiply, ktt::ModifierDimension::X);
+    //tuner.addParameter(kernelId, "WORK_GROUP_SIZE_Y", std::vector<size_t>{1, 2, 4, 8, 16, 32}, ktt::ModifierType::Local, ktt::ModifierAction::Multiply, ktt::ModifierDimension::Y);
 
     // Add all arguments utilized by kernels
     ktt::ArgumentId AId = tuner.addArgumentVector(A, ktt::ArgumentAccessType::ReadOnly);
@@ -115,8 +115,8 @@ int main(int argc, char** argv)
     ktt::ArgumentId x2Id = tuner.addArgumentVector(x2, ktt::ArgumentAccessType::ReadOnly);
     ktt::ArgumentId y1Id = tuner.addArgumentVector(y1, ktt::ArgumentAccessType::ReadWrite);
     ktt::ArgumentId y2Id = tuner.addArgumentVector(y2, ktt::ArgumentAccessType::ReadWrite);
-    ktt::ArgumentId mId = tuner.addArgumentScalar(m);
-    ktt::ArgumentId nId = tuner.addArgumentScalar(n);
+    ktt::ArgumentId mId = tuner.addArgumentScalar(NX/by);
+    ktt::ArgumentId nId = tuner.addArgumentScalar(NY);
     //ktt::ArgumentId energyGridId = tuner.addArgumentVector(energyGrid, ktt::ArgumentAccessType::ReadWrite);
 
     // Set kernel arguments for both tuned kernel and reference kernel, order of arguments is important
@@ -130,7 +130,7 @@ int main(int argc, char** argv)
     tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 0.01);
 
     // Set reference kernel which validates results provided by tuned kernel, provide list of arguments which will be validated
-    tuner.setReferenceKernel(kernelId, referenceKernelId, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1, y2});
+    tuner.setReferenceKernel(kernelId, referenceKernelId, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1Id, y2Id});
 
     // Launch kernel tuning
     tuner.tuneKernel(kernelId);
