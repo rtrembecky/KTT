@@ -21,6 +21,10 @@
 #define NX 4096
 #define NY 4096
 
+/* Thread block dimensions */
+#define WORK_GROUP_X 256
+#define WORK_GROUP_Y 1
+
 typedef float DATA_TYPE;
 
 int main(int argc, char** argv)
@@ -52,9 +56,10 @@ int main(int argc, char** argv)
 
     // Declare kernel parameters
     const ktt::DimensionVector ndRangeDimensions(NY, by*32);
-    const ktt::DimensionVector referenceNdRangeDimensions(NY, by*32/8);
+    const ktt::DimensionVector referenceNdRangeDimensions1(ceil(NX/WORK_GROUP_X)*WORK_GROUP_X, 1);
+    const ktt::DimensionVector referenceNdRangeDimensions2(ceil(NY/WORK_GROUP_X)*WORK_GROUP_X, 1);
     const ktt::DimensionVector workGroupDimensions(32, 32);
-    const ktt::DimensionVector referenceWorkGroupDimensions(32, 32/8);
+    const ktt::DimensionVector referenceWorkGroupDimensions(WORK_GROUP_X, 1);
 
     // Declare data variables
     std::vector<DATA_TYPE> A(NX * NY);
@@ -82,7 +87,8 @@ int main(int argc, char** argv)
 
     // Add two kernels to tuner, one of the kernels acts as reference kernel
     ktt::KernelId kernelId = tuner.addKernelFromFile(kernelFile, "bicgFused", ndRangeDimensions, workGroupDimensions);
-    ktt::KernelId referenceKernelId = tuner.addKernelFromFile(referenceKernelFile, "bicgFusedRef", referenceNdRangeDimensions, referenceWorkGroupDimensions);
+    ktt::KernelId referenceKernel1Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel1", referenceNdRangeDimensions1, referenceWorkGroupDimensions);
+    ktt::KernelId referenceKernel2Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel2", referenceNdRangeDimensions2, referenceWorkGroupDimensions);
 
     // Add several parameters to tuned kernel, some of them utilize constraint function and thread modifiers
     //tuner.addParameter(kernelId, "INNER_UNROLL_FACTOR", std::vector<size_t>{0, 1, 2, 4, 8, 16, 32});
@@ -109,12 +115,14 @@ int main(int argc, char** argv)
     ktt::ArgumentId y1Id = tuner.addArgumentVector(y1, ktt::ArgumentAccessType::ReadWrite);
     ktt::ArgumentId y2Id = tuner.addArgumentVector(y2, ktt::ArgumentAccessType::ReadWrite);
     ktt::ArgumentId mId = tuner.addArgumentScalar(NX/by);
+    ktt::ArgumentId mRefId = tuner.addArgumentScalar(NX);
     ktt::ArgumentId nId = tuner.addArgumentScalar(NY);
     //ktt::ArgumentId energyGridId = tuner.addArgumentVector(energyGrid, ktt::ArgumentAccessType::ReadWrite);
 
     // Set kernel arguments for both tuned kernel and reference kernel, order of arguments is important
     tuner.setKernelArguments(kernelId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
-    tuner.setKernelArguments(referenceKernelId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
+    tuner.setKernelArguments(referenceKernel1Id, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, mRefId, nId});
+    tuner.setKernelArguments(referenceKernel2Id, std::vector<ktt::ArgumentId>{AId, x2Id, y2Id, mRefId, nId});
 
     // Set search method to random search, only 10% of all configurations will be explored.
     //tuner.setSearchMethod(ktt::SearchMethod::RandomSearch, std::vector<double>{0.1});
@@ -123,7 +131,8 @@ int main(int argc, char** argv)
     tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 2.0);
 
     // Set reference kernel which validates results provided by tuned kernel, provide list of arguments which will be validated
-    tuner.setReferenceKernel(kernelId, referenceKernelId, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1Id, y2Id});
+	tuner.setReferenceKernel(kernelId, referenceKernel1Id, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1Id});
+	tuner.setReferenceKernel(kernelId, referenceKernel2Id, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y2Id});
 
     // Launch kernel tuning
     tuner.tuneKernel(kernelId);

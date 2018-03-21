@@ -19,7 +19,6 @@
 #define OPTIMIZE 2
 
 // process BICG_BATCH elements in thread
-//#define BICG_BATCH 8
 #define BICG_STEP 32/BICG_BATCH
 
 typedef float DATA_TYPE;
@@ -75,27 +74,15 @@ inline void atomicAdd_g_f(volatile __global float *addr, float val)
 
 __kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *x1, __global DATA_TYPE *y1, __global DATA_TYPE *x2, __global DATA_TYPE *y2, int m, int n)
 {
-	/*int j = get_global_id(0);
-	int i = get_global_id(1);
-	int y = get_local_id(0);
-	int x = get_local_id(1);
-
-	float Pvalue = 0;
-	// each thread computes one element of the block sub-matrix
-	for (int k = 0; k < BLOCK; ++k)
-		Pvalue += Md[Row*BLOCK + k] * Nd[k*BLOCK + Col];
-	Pd[Row*Width + Col] = Pvalue;
-	*/
-	
 	int tx = get_local_id(0);
 	int ty = get_local_id(1);
 	int bx = get_group_id(0);
 	int by = get_group_id(1);
 	int gy = get_global_size(1);
 
-	__local float s_A[32][33];
-	__local float s_x1[32];
-	__local float s_x2[32];
+	__local DATA_TYPE s_A[32][33];
+	__local DATA_TYPE s_x1[32];
+	__local DATA_TYPE s_x2[32];
 
 	float l_sum = 0.0f;
 

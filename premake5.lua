@@ -233,7 +233,13 @@ project "nbody_opencl"
 
 project "bicg_opencl"
     kind "ConsoleApp"
-    files { "examples/bicg/*.cpp", "examples/bicg/*.cl" }
+    files { "examples/bicg/bicg.cpp", "examples/bicg/*.cl" }
+    includedirs { "source" }
+    links { "ktt" }
+
+project "bicg-2kernel_opencl"
+    kind "ConsoleApp"
+    files { "examples/bicg/bicg_2kernel.cpp", "examples/bicg/*.cl" }
     includedirs { "source" }
     links { "ktt" }
 

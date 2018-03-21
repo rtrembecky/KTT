@@ -1,27 +1,3 @@
-__kernel void directCoulombSumReference(__global float4* atomInfo, int numberOfAtoms, float gridSpacing, __global float* energyGrid)
-{
-    int xIndex = get_global_id(0);
-    int yIndex = get_global_id(1);
-        
-    int outIndex = get_global_size(0) * yIndex + xIndex;
-
-    float currentEnergy = energyGrid[outIndex];
-
-    float coordX = gridSpacing * xIndex;
-    float coordY = gridSpacing * yIndex;
-    float energyValue = 0.0f;
-
-    for (int i = 0; i < numberOfAtoms; i++)
-    {
-        float distanceX = coordX - atomInfo[i].x;
-        float distanceY = coordY - atomInfo[i].y;
-        float partialResult = native_rsqrt(distanceX * distanceX + distanceY * distanceY + atomInfo[i].z);
-        energyValue += atomInfo[i].w * partialResult;
-    }
-
-    energyGrid[outIndex] += currentEnergy + energyValue;
-}
-
 /**
  * bicg.cl: This file is part of the PolyBench/GPU 1.0 test suite.
  *
@@ -36,11 +12,6 @@ __kernel void directCoulombSumReference(__global float4* atomInfo, int numberOfA
 #elif defined(cl_amd_fp64)  // AMD extension available?
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
-
-// optimization for:
-// 1 -- pre-Fermi
-// 2 -- Fermi
-#define OPTIMIZE 2
 
 // process BICG_BATCH elements in thread
 #define BICG_BATCH 8
@@ -105,9 +76,9 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 	int by = get_group_id(1);
 	int gy = get_global_size(1);
 
-	__local float s_A[32][33];
-	__local float s_x1[32];
-	__local float s_x2[32];
+	__local DATA_TYPE s_A[32][33];
+	__local DATA_TYPE s_x1[32];
+	__local DATA_TYPE s_x2[32];
 
 	float l_sum = 0.0f;
 	//if (ty < 1 && tx < 1 && by == 0)
@@ -116,57 +87,47 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 	// load x2
 	if (ty == 0)
 		s_x2[tx] = x2[bx * 32 + tx];
-	//if (ty < 2 && tx < 2)
-	//	printf("tx,ty,bx,by %d,%d,%d,%d: x2 loaded to s_x2\n", tx,ty,bx,by);
-//#pragma unroll 1
 	for (int i = m*by; i < m*(by + 1); i += 32) {
 		// load x1
 		if (ty == 1)
 			s_x1[tx] = x1[i + tx];
 		barrier(CLK_LOCAL_MEM_FENCE);
-//#pragma unroll
+
 		for (int j = 0; j < 32; j += BICG_STEP) {
 			s_A[ty + j][tx] = A[(i + ty + j)*n + bx * 32 + tx];
 			l_sum += s_A[ty + j][tx] * s_x1[ty + j];
 		}
 		barrier(CLK_LOCAL_MEM_FENCE);
 		float tmp = 0.0f;
-//#pragma unroll
+
 		for (int j = 0; j < 32; j += BICG_STEP)
 			tmp += s_A[tx][ty + j] * s_x2[ty + j];
 		s_A[tx][ty] = tmp;
 		barrier(CLK_LOCAL_MEM_FENCE);
-//#if BICG_BATCH <= 8
+//BATCH 8 code
 		if (ty < 2)
 			s_A[tx][ty] = tmp = tmp + s_A[tx][ty + 2];
 		barrier(CLK_LOCAL_MEM_FENCE);
-//#endif
-		//if (ty < 2 && tx < 2)
-		//	printf("tx,ty,bx,by %d,%d,%d,%d | i = %d: before atomicAdd to y2\n", tx,ty,bx,by, i);
+
 		if (ty == 0) {
-//#if OPTIMIZE == 2
+//#if OPTIMIZE == 2 (atomics, no need to reduce later)
 			atomicAdd_g_f(y2 + i + tx, tmp + s_A[tx][1]);
 //#else
-//			y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
-//#endif
+			//y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
 		}
-		//if (ty < 2 && tx < 2)
-		//	printf("tx,ty,bx,by %d,%d,%d,%d | i = %d: after atomicAdd to y2\n", tx,ty,bx,by, i);
 	}
 
 	// compute total sum
 	barrier(CLK_LOCAL_MEM_FENCE);
 	s_A[ty][tx] = l_sum;
-//#if BICG_BATCH <= 8
-			if (ty < 2) {
-				barrier(CLK_LOCAL_MEM_FENCE);
-				s_A[ty][tx] = l_sum = l_sum + s_A[ty + 2][tx];
-//#endif
-				if (ty == 0) {
-					barrier(CLK_LOCAL_MEM_FENCE);
-					atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
-				}
-//#if BICG_BATCH <= 8
-			}
-//#endif
+//BATCH 8 code
+	if (ty < 2) {
+		barrier(CLK_LOCAL_MEM_FENCE);
+		s_A[ty][tx] = l_sum = l_sum + s_A[ty + 2][tx];
+//end
+		if (ty == 0) {
+			barrier(CLK_LOCAL_MEM_FENCE);
+			atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
+		}
+	}
 }
