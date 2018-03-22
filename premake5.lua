@@ -237,7 +237,7 @@ project "bicg_opencl"
     includedirs { "source" }
     links { "ktt" }
 
-project "bicg-2kernel_opencl"
+project "bicg_2kernel_opencl"
     kind "ConsoleApp"
     files { "examples/bicg/bicg_2kernel.cpp", "examples/bicg/*.cl" }
     includedirs { "source" }

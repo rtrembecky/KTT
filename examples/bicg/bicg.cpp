@@ -23,6 +23,64 @@
 
 typedef float DATA_TYPE;
 
+class SimpleValidator : public ktt::ReferenceClass
+{
+public:
+    SimpleValidator(const ktt::ArgumentId arg1Id, const ktt::ArgumentId arg2Id, const std::vector<DATA_TYPE>& A, const std::vector<DATA_TYPE>& x1, const std::vector<DATA_TYPE>& x2, const std::vector<DATA_TYPE>& y1, const std::vector<DATA_TYPE>& y2) :
+        arg1Id(arg1Id),
+        arg2Id(arg2Id),
+        A(A),
+	x1(x1),
+	x2(x2),
+	y1(y1),
+	y2(y2)
+    {}
+
+    // Method inherited from ReferenceClass, which computes reference result for all arguments that are validated inside the class.
+    void computeResult() override
+    {
+        int i,j;
+	
+  	for (i = 0; i < NY; i++)
+	{
+		y2[i] = 0.0;
+	}
+
+	for (i = 0; i < NX; i++)
+	{
+		y1[i] = 0.0;
+		for (j = 0; j < NY; j++)
+	  	{
+	    		y2[j] = y2[j] + x2[i] * A[i*NY + j];
+	    		y1[i] = y1[i] + A[i*NY + j] * x1[j];
+	  	}
+	}
+    }
+
+    // Method inherited from ReferenceClass, which returns memory location where reference result for corresponding argument is stored.
+    void* getData(const ktt::ArgumentId id) override
+    {
+        if (id == arg1Id)
+        {
+            return y1.data();
+        }
+        if (id == arg2Id)
+        {
+            return y2.data();
+        }
+        return nullptr;
+    }
+
+private:
+    ktt::ArgumentId arg1Id;
+    ktt::ArgumentId arg2Id;
+    const std::vector<DATA_TYPE>& A;
+    const std::vector<DATA_TYPE>& x1;
+    const std::vector<DATA_TYPE>& x2;
+    std::vector<DATA_TYPE> y1;
+    std::vector<DATA_TYPE> y2;
+};
+
 int main(int argc, char** argv)
 {
     // Initialize platform index, device index and paths to kernels
@@ -114,16 +172,17 @@ int main(int argc, char** argv)
 
     // Set kernel arguments for both tuned kernel and reference kernel, order of arguments is important
     tuner.setKernelArguments(kernelId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
-    tuner.setKernelArguments(referenceKernelId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
+	tuner.setKernelArguments(referenceKernelId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
 
     // Set search method to random search, only 10% of all configurations will be explored.
     //tuner.setSearchMethod(ktt::SearchMethod::RandomSearch, std::vector<double>{0.1});
 
     // Specify custom tolerance threshold for validation of floating point arguments. Default threshold is 1e-4.
-    tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 2.0);
+    //tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 2.0);
 
     // Set reference kernel which validates results provided by tuned kernel, provide list of arguments which will be validated
-    tuner.setReferenceKernel(kernelId, referenceKernelId, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1Id, y2Id});
+	//tuner.setReferenceKernel(kernelId, referenceKernelId, std::vector<ktt::ParameterPair>{}, std::vector<ktt::ArgumentId>{y1Id, y2Id});
+	tuner.setReferenceClass(kernelId, std::make_unique<SimpleValidator>(y1Id, y2Id, A, x1, x2, y1, y2), std::vector<ktt::ArgumentId>{y1Id, y2Id});
 
     // Launch kernel tuning
     tuner.tuneKernel(kernelId);
