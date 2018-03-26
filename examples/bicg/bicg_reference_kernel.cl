@@ -13,59 +13,59 @@
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
 
-// process BICG_BATCH elements in thread
+ // process BICG_BATCH elements in thread
 #define BICG_BATCH 8
 #define BICG_STEP 32/BICG_BATCH
 
 typedef float DATA_TYPE;
 
-__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny) 
+__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny)
 {
-    	int i = get_global_id(0);
-	
+	int i = get_global_id(0);
+
 	if (i < nx)
 	{
 		q[i] = 0.0;
 
 		int j;
-		for(j=0; j < ny; j++)
+		for (j = 0; j < ny; j++)
 		{
 			q[i] += A[i * ny + j] * p[j];
 		}
 	}
-	
+
 }
 
-__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny) 
+__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny)
 {
 	int j = get_global_id(0);
-	
+
 	if (j < ny)
 	{
 		s[j] = 0.0;
 
 		int i;
-		for(i = 0; i < nx; i++)
+		for (i = 0; i < nx; i++)
 		{
 			s[j] += A[i * ny + j] * r[i];
 		}
 	}
-	
+
 }
 
 inline void atomicAdd_g_f(volatile __global float *addr, float val)
 {
-	union{
+	union {
 		unsigned int u32;
 		float f32;
 	} next, expected, current;
 	current.f32 = *addr;
-	do{
+	do {
 		expected.f32 = current.f32;
 		next.f32 = expected.f32 + val;
-		current.u32 = atomic_cmpxchg( (volatile __global unsigned int *)addr,
-		expected.u32, next.u32);
-	} while( current.u32 != expected.u32 );
+		current.u32 = atomic_cmpxchg((volatile __global unsigned int *)addr,
+			expected.u32, next.u32);
+	} while (current.u32 != expected.u32);
 }
 
 __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __global DATA_TYPE *y1, __global DATA_TYPE *x2, __global DATA_TYPE *y2, int m, int n)
@@ -104,30 +104,40 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 			tmp += s_A[tx][ty + j] * s_x2[ty + j];
 		s_A[tx][ty] = tmp;
 		barrier(CLK_LOCAL_MEM_FENCE);
-//BATCH 8 code
+		//BATCH 8 code
 		if (ty < 2)
 			s_A[tx][ty] = tmp = tmp + s_A[tx][ty + 2];
 		barrier(CLK_LOCAL_MEM_FENCE);
 
 		if (ty == 0) {
-//#if OPTIMIZE == 2 (atomics, no need to reduce later)
+			//#if OPTIMIZE == 2 (atomics, no need to reduce later)
 			atomicAdd_g_f(y2 + i + tx, tmp + s_A[tx][1]);
-//#else
-			//y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
+			//#else
+						//y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
 		}
 	}
 
 	// compute total sum
 	barrier(CLK_LOCAL_MEM_FENCE);
 	s_A[ty][tx] = l_sum;
+	//printf("s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 //BATCH 8 code
 	if (ty < 2) {
+		//if(tx < 2)
+		//printf("s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 		barrier(CLK_LOCAL_MEM_FENCE);
 		s_A[ty][tx] = l_sum = l_sum + s_A[ty + 2][tx];
+		//if (tx < 2)
+		//printf("2. s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 //end
 		if (ty == 0) {
 			barrier(CLK_LOCAL_MEM_FENCE);
 			atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
 		}
+		if (tx < 2)
+			printf("y1[0]: %f, y1[1]: %f, y1[2]: %f", y1[0], y1[1], y1[2]);
+	}
+	for (int i = 0; i++; i < 10000) {
+		printf("");
 	}
 }

@@ -13,9 +13,9 @@
 #pragma OPENCL EXTENSION cl_amd_fp64 : enable
 #endif
 
-// optimization for:
-// 1 -- pre-Fermi
-// 2 -- Fermi
+ // optimization for:
+ // 1 -- pre-Fermi
+ // 2 -- Fermi
 #define OPTIMIZE 2
 
 // process BICG_BATCH elements in thread
@@ -23,53 +23,51 @@
 
 typedef float DATA_TYPE;
 
-__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny) 
+__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny)
 {
-    	int i = get_global_id(0);
-	
+	int i = get_global_id(0);
+
 	if (i < nx)
 	{
 		q[i] = 0.0;
 
 		int j;
-		for(j=0; j < ny; j++)
+		for (j = 0; j < ny; j++)
 		{
 			q[i] += A[i * ny + j] * p[j];
 		}
 	}
-	
 }
 
-__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny) 
+__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny)
 {
 	int j = get_global_id(0);
-	
+
 	if (j < ny)
 	{
 		s[j] = 0.0;
 
 		int i;
-		for(i = 0; i < nx; i++)
+		for (i = 0; i < nx; i++)
 		{
 			s[j] += A[i * ny + j] * r[i];
 		}
 	}
-	
 }
 
 inline void atomicAdd_g_f(volatile __global float *addr, float val)
 {
-	union{
+	union {
 		unsigned int u32;
 		float f32;
 	} next, expected, current;
 	current.f32 = *addr;
-	do{
+	do {
 		expected.f32 = current.f32;
 		next.f32 = expected.f32 + val;
-		current.u32 = atomic_cmpxchg( (volatile __global unsigned int *)addr,
-		expected.u32, next.u32);
-	} while( current.u32 != expected.u32 );
+		current.u32 = atomic_cmpxchg((volatile __global unsigned int *)addr,
+			expected.u32, next.u32);
+	} while (current.u32 != expected.u32);
 }
 
 __kernel void bicgFused(__global DATA_TYPE *A, __global DATA_TYPE *x1, __global DATA_TYPE *y1, __global DATA_TYPE *x2, __global DATA_TYPE *y2, int m, int n)
