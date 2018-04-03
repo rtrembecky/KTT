@@ -19,35 +19,35 @@
 
 typedef float DATA_TYPE;
 
-__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int nx, int ny)
+__kernel void bicgKernel1(__global DATA_TYPE *A, __global DATA_TYPE *p, __global DATA_TYPE *q, int m, int n)
 {
 	int i = get_global_id(0);
 
-	if (i < nx)
+	if (i < n)
 	{
 		q[i] = 0.0;
 
 		int j;
-		for (j = 0; j < ny; j++)
+		for (j = 0; j < m; j++)
 		{
-			q[i] += A[i * ny + j] * p[j];
+			q[i] += A[i * m + j] * p[j];
 		}
 	}
 
 }
 
-__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int nx, int ny)
+__kernel void bicgKernel2(__global DATA_TYPE *A, __global DATA_TYPE *r, __global DATA_TYPE *s, int m, int n)
 {
 	int j = get_global_id(0);
 
-	if (j < ny)
+	if (j < m)
 	{
 		s[j] = 0.0;
 
 		int i;
-		for (i = 0; i < nx; i++)
+		for (i = 0; i < n; i++)
 		{
-			s[j] += A[i * ny + j] * r[i];
+			s[j] += A[i * m + j] * r[i];
 		}
 	}
 
