@@ -81,8 +81,6 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 	__local DATA_TYPE s_x2[32];
 
 	float l_sum = 0.0f;
-	//if (ty < 1 && tx < 1 && by == 0)
-	//	printf("tx,ty: %d,%d, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", tx, ty, bx, by, gy, m, n, x1[0], y1[0]);
 
 	// load x2
 	if (ty == 0)
@@ -120,24 +118,14 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 	// compute total sum
 	barrier(CLK_LOCAL_MEM_FENCE);
 	s_A[ty][tx] = l_sum;
-	//printf("s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 //BATCH 8 code
 	if (ty < 2) {
-		//if(tx < 2)
-		//printf("s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 		barrier(CLK_LOCAL_MEM_FENCE);
 		s_A[ty][tx] = l_sum = l_sum + s_A[ty + 2][tx];
-		//if (tx < 2)
-		//printf("2. s_A[ty=%d][tx=%d] = l_sum = %f, bx,by: %d,%d, gy: %d\n m: %d, n: %d, x1[0]: %2.2f, y1[0]: %2.2f\n", ty, tx, s_A[ty][tx], bx, by, gy, m, n, x1[0], y1[0]);
 //end
 		if (ty == 0) {
 			barrier(CLK_LOCAL_MEM_FENCE);
 			atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
 		}
-		if (tx < 2)
-			printf("y1[0]: %f, y1[1]: %f, y1[2]: %f", y1[0], y1[1], y1[2]);
-	}
-	for (int i = 0; i++; i < 10000) {
-		printf("");
 	}
 }
