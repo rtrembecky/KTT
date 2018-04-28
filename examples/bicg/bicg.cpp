@@ -12,20 +12,15 @@
 #define KTT_REFERENCE_KERNEL_FILE "../../examples/bicg/bicg_reference_kernel.cl"
 #endif
 
-//#include <stdlib.h>
-//#include <time.h>
-//#include <sys/time.h>
-//#include <math.h>
-
 /* Problem size. */
-#define N 8192 // 16384 // 32768
+#define N 16384
 #define M 8192
 
 /* Thread block dimensions */
 #define WORK_GROUP_X 256
 #define WORK_GROUP_Y 1
 
-// New NVidia GPUs have max.workgroup size of 1024
+// New NVidia GPUs have max. workgroup size of 1024
 #define MAX_WORK_GROUP_SIZE 1024
 
 class BicgCpu : public ktt::ReferenceClass
@@ -89,30 +84,41 @@ private:
 class BicgManipulator : public ktt::TuningManipulator
 {
 public:
-	BicgManipulator(const ktt::KernelId kernel1Id, const ktt::KernelId kernel2Id, const ktt::KernelId kernelFusedId) :
-		kernel1Id(kernel1Id), kernel2Id(kernel2Id), kernelFusedId(kernelFusedId)
+	BicgManipulator(const ktt::KernelId kernel1Id, const ktt::KernelId kernel2Id, const ktt::KernelId kernelFusedId, const ktt::KernelId kernelFusedRefId, const ktt::KernelId kernelReduction1Id, const ktt::KernelId kernelReduction2Id) :
+		kernel1Id(kernel1Id),
+		kernel2Id(kernel2Id),
+		kernelFusedId(kernelFusedId),
+		kernelFusedRefId(kernelFusedRefId),
+		kernelReduction1Id(kernelReduction1Id),
+		kernelReduction2Id(kernelReduction2Id)
 	{}
 
 	// LaunchComputation is responsible for actual execution of tuned kernel
 	void launchComputation(const ktt::KernelId kernelId) override
 	{
-		// Get kernel data
-		ktt::DimensionVector globalSize = getCurrentGlobalSize(kernelFusedId);
-		ktt::DimensionVector localSize = getCurrentLocalSize(kernelFusedId);
-
 		std::vector<ktt::ParameterPair> parameterValues = getCurrentConfiguration();
 
-		const int rowsProcessed = getParameterValue("ROWS_PROCESSED", parameterValues);
-		const int tile = getParameterValue("TILE", parameterValues);
-		const int bicgBatch = getParameterValue("BICG_BATCH", parameterValues);
-		globalSize.setSizeX(M);
-		globalSize.setSizeY(N / rowsProcessed * tile / bicgBatch);
-		localSize.setSizeX(tile);
-		localSize.setSizeY(tile / bicgBatch);
-		printf("changed global to %d x %d and local to %d x %d\n", globalSize.getSizeX(), globalSize.getSizeY(), localSize.getSizeX(), localSize.getSizeY());
+		if (getParameterValue("FUSED", parameterValues) == 2) {
+			ktt::DimensionVector globalSize = getCurrentGlobalSize(kernelFusedId);
+			ktt::DimensionVector localSize = getCurrentLocalSize(kernelFusedId);
 
-		if (getParameterValue("FUSED", parameterValues) == 1) {
+			const int rowsProcessed = getParameterValue("ROWS_PROCESSED", parameterValues);
+			const int tile = getParameterValue("TILE", parameterValues);
+			const int bicgBatch = getParameterValue("BICG_BATCH", parameterValues);
+			globalSize.setSizeX(M);
+			globalSize.setSizeY(N / rowsProcessed * tile / bicgBatch);
+			localSize.setSizeX(tile);
+			localSize.setSizeY(tile / bicgBatch);
+			printf("changed global to %d x %d and local to %d x %d\n", globalSize.getSizeX(), globalSize.getSizeY(), localSize.getSizeX(), localSize.getSizeY());
+
 			runKernel(kernelFusedId, globalSize, localSize);
+			if (getParameterValue("ATOMICS", parameterValues) == 0) {
+				runKernel(kernelReduction1Id);
+				runKernel(kernelReduction2Id);
+			}
+		}
+		else if (getParameterValue("FUSED", parameterValues) == 1) {
+			runKernel(kernelFusedRefId);
 		}
 		else {
 			runKernel(kernel1Id);
@@ -124,6 +130,9 @@ private:
 	ktt::KernelId kernel1Id;
 	ktt::KernelId kernel2Id;
 	ktt::KernelId kernelFusedId;
+	ktt::KernelId kernelFusedRefId;
+	ktt::KernelId kernelReduction1Id;
+	ktt::KernelId kernelReduction2Id;
 };
 
 int main(int argc, char** argv)
@@ -151,11 +160,9 @@ int main(int argc, char** argv)
 		}
 	}
 
-	int by = N / 256; // unused
-
 	// Declare kernel parameters
-	const ktt::DimensionVector ndRangeDimensions(M, by * 32); // replaced in manipulator
-	const ktt::DimensionVector workGroupDimensions(32, 32); // replaced in manipulator
+	const ktt::DimensionVector ndRangeDimensions(M, N / 64); // replaced in manipulator
+	const ktt::DimensionVector workGroupDimensions(32, 4); // replaced in manipulator
 	const ktt::DimensionVector referenceNdRangeDimensions1(ceil(N / WORK_GROUP_X)*WORK_GROUP_X, 1);
 	const ktt::DimensionVector referenceNdRangeDimensions2(ceil(M / WORK_GROUP_X)*WORK_GROUP_X, 1);
 	const ktt::DimensionVector referenceWorkGroupDimensions(WORK_GROUP_X, 1);
@@ -164,8 +171,9 @@ int main(int argc, char** argv)
 	std::vector<float> A(N * M);
 	std::vector<float> x1(M);
 	std::vector<float> x2(N);
-	std::vector<float> y1(N, 0.0f);
-	std::vector<float> y2(M, 0.0f);
+	// larger versions of vectors needed for ATOMICS == 0, they are reduced later in separate kernels
+	std::vector<float> y1(N * M/16, 0.0f); // 16 is the lowest TILE size, so M/16 is maximum number of x-blocks
+	std::vector<float> y2(M * N/128, 0.0f); // 128 is the lowest ROWS_PROCESSED value, so N/128 is maximum number of y-blocks
 
 	// Initialize data
 	std::random_device device;
@@ -173,49 +181,15 @@ int main(int argc, char** argv)
 	std::uniform_real_distribution<float> distribution(0.0f, 100.0f);
 
 	for (int j = 0; j < M; j++)
-		x1[j] = distribution(engine); //1.0f;// (float)j; // distribution(engine);
-
+		x1[j] = distribution(engine);
 	for (int i = 0; i < N; i++) {
-		x2[i] = (float)i/1000;// 1.0f;// (float)i + 5;// distribution(engine);
+		x2[i] = distribution(engine);
 		for (int j = 0; j < M; j++)
-			A[i*M + j] = distribution(engine); //(float)(i + 1); //distribution(engine); // (j % 7 + 1) / 1000;// j > 1000 ? (float)j / 10000 : (float)(j + 1) / 1000;// distribution(engine);
-		//if (i < 3) printf("A[%d*%d+[0,1,5]] = %.3f %.3f %.3f |", i, M, A[i*M + 0], A[i*M + 1], A[i*M + 5]);
+			A[i*M + j] = distribution(engine);
 	}
 
 	// Create tuner object for specified platform and device
 	ktt::Tuner tuner(platformIndex, deviceIndex);
-
-	// Add two kernels to tuner, one of the kernels acts as reference kernel
-	ktt::KernelId kernelFusedId = tuner.addKernelFromFile(kernelFile, "bicgFused", ndRangeDimensions, workGroupDimensions);
-	ktt::KernelId kernel1Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel1", referenceNdRangeDimensions1, referenceWorkGroupDimensions);
-	ktt::KernelId kernel2Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel2", referenceNdRangeDimensions2, referenceWorkGroupDimensions);
-	ktt::KernelId kernelId = tuner.addComposition("BicgPolyBenchAndFused", std::vector<ktt::KernelId>{kernel1Id, kernel2Id, kernelFusedId}, std::make_unique<BicgManipulator>(kernel1Id, kernel2Id, kernelFusedId));
-	
-	// Add parameters to tuned kernel
-	tuner.addParameter(kernelId, "FUSED", std::vector<size_t>{0, 1});
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "BICG_BATCH", std::vector<size_t>{ 1, 2, 4, 8}, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "USE_SHARED_MATRIX", std::vector<size_t>{ 0, 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "USE_SHARED_VECTOR1", std::vector<size_t>{ /*0,*/ 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "USE_SHARED_VECTOR2", std::vector<size_t>{ /*0,*/ 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "USE_SHARED_REDUCTION", std::vector<size_t>{ 0, 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "ATOMICS", std::vector<size_t>{ 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y); // TODO: add value 0 and reduce y1 and y2 on CPU
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "UNROLL_BICG_STEP", std::vector<size_t>{ /*0,*/ 1 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "ROWS_PROCESSED", std::vector<size_t>{ 128, 256, 512, 1024 }, ktt::ModifierType::None, ktt::ModifierAction::Divide, ktt::ModifierDimension::Y);
-	tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "TILE", std::vector<size_t>{ 16, 32, 64 }, ktt::ModifierType::None, ktt::ModifierAction::Multiply, ktt::ModifierDimension::X);
-
-	// All of the parameters are used only in the fused kernel
-	auto fused = [](std::vector<size_t> vector) {return vector.at(0) == 1 || (vector.at(0) == 0 && vector.at(1) == 4 && vector.at(2) == 1 && vector.at(3) == 1 && vector.at(4) == 1 && vector.at(5) == 1 && vector.at(6) == 1 && vector.at(7) == 1 && vector.at(8) == 256) && vector.at(9) == 32; };
-	tuner.addConstraint(kernelId, fused, std::vector<std::string>{"FUSED", "BICG_BATCH", "USE_SHARED_MATRIX", "USE_SHARED_VECTOR1", "USE_SHARED_VECTOR2", "USE_SHARED_REDUCTION", "ATOMICS", "UNROLL_BICG_STEP", "ROWS_PROCESSED", "TILE"});
-	// New NVidia GPUs have max. workgroup size of 1024, so   tile_x * tile_y <= 1024   ==>   tile_x * (tile_x / batch) <= 1024
-	auto maxWgSize = [](std::vector<size_t> vector) {return vector.at(0) * vector.at(0) / vector.at(1) <= MAX_WORK_GROUP_SIZE; };
-	tuner.addConstraint(kernelId, maxWgSize, std::vector<std::string>{"TILE", "BICG_BATCH"});
-
-	// Divide NDRange in dimension x by OUTER_UNROLL_FACTOR
-	//tuner.addParameter(kernelId, "OUTER_UNROLL_FACTOR", std::vector<size_t>{1, 2, 4, 8}, ktt::ModifierType::Global, ktt::ModifierAction::Divide, ktt::ModifierDimension::X);
-
-	// Multiply workgroup size in dimensions x and y by two parameters that follow (effectively setting workgroup size to parameters' values)
-	//tuner.addCompositionKernelParameter(kernelId, kernelFusedId, "BATCH_X", std::vector<size_t>{ 1}, ktt::ModifierType::Both, ktt::ModifierAction::Divide, ktt::ModifierDimension::X);
-	//tuner.addParameter(kernelId, "TILE_Y", std::vector<size_t>{1, 2, 4, 8, 16, 32}, ktt::ModifierType::Local, ktt::ModifierAction::Multiply, ktt::ModifierDimension::Y);
 
 	// Add all arguments utilized by kernels
 	ktt::ArgumentId AId = tuner.addArgumentVector(A, ktt::ArgumentAccessType::ReadOnly);
@@ -223,14 +197,46 @@ int main(int argc, char** argv)
 	ktt::ArgumentId x2Id = tuner.addArgumentVector(x2, ktt::ArgumentAccessType::ReadOnly);
 	ktt::ArgumentId y1Id = tuner.addArgumentVector(y1, ktt::ArgumentAccessType::ReadWrite);
 	ktt::ArgumentId y2Id = tuner.addArgumentVector(y2, ktt::ArgumentAccessType::ReadWrite);
-	ktt::ArgumentId mId = tuner.addArgumentScalar(M);
+	ktt::ArgumentId mFusedRefId = tuner.addArgumentScalar(M);
+	ktt::ArgumentId nFusedRefId = tuner.addArgumentScalar(256);
 	ktt::ArgumentId mRefId = tuner.addArgumentScalar(M);
-	ktt::ArgumentId nId = tuner.addArgumentScalar(N / by); // 256
 	ktt::ArgumentId nRefId = tuner.addArgumentScalar(N);
-	//ktt::ArgumentId energyGridId = tuner.addArgumentVector(energyGrid, ktt::ArgumentAccessType::ReadWrite);
+
+	// Add kernels to tuner, create a kernel composition
+	ktt::KernelId kernelFusedId = tuner.addKernelFromFile(kernelFile, "bicgFused", ndRangeDimensions, workGroupDimensions);
+	ktt::KernelId kernelReduction1Id = tuner.addKernelFromFile(kernelFile, "bicgReduction1", referenceNdRangeDimensions1, referenceWorkGroupDimensions);
+	ktt::KernelId kernelReduction2Id = tuner.addKernelFromFile(kernelFile, "bicgReduction2", referenceNdRangeDimensions1, referenceWorkGroupDimensions);
+	ktt::KernelId kernelFusedRefId = tuner.addKernelFromFile(referenceKernelFile, "bicgFusedRef", ndRangeDimensions, workGroupDimensions);
+	ktt::KernelId kernel1Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel1", referenceNdRangeDimensions1, referenceWorkGroupDimensions);
+	ktt::KernelId kernel2Id = tuner.addKernelFromFile(referenceKernelFile, "bicgKernel2", referenceNdRangeDimensions2, referenceWorkGroupDimensions);
+	ktt::KernelId kernelId = tuner.addComposition("BicgPolyBenchAndFused", std::vector<ktt::KernelId>{kernel1Id, kernel2Id, kernelFusedId, kernelFusedRefId, kernelReduction1Id, kernelReduction2Id}, std::make_unique<BicgManipulator>(kernel1Id, kernel2Id, kernelFusedId, kernelFusedRefId, kernelReduction1Id, kernelReduction2Id));
+	
+	// Add parameters to tuned kernel
+	tuner.addParameter(kernelId, "FUSED", std::vector<size_t>{ 0, 1, 2 });
+	tuner.addParameter(kernelId, "BICG_BATCH", std::vector<size_t>{ 1, 2, 4, 8 });
+	tuner.addParameter(kernelId, "USE_SHARED_MATRIX", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "USE_SHARED_VECTOR_1", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "USE_SHARED_VECTOR_2", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "USE_SHARED_REDUCTION_1", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "USE_SHARED_REDUCTION_2", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "ATOMICS", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "UNROLL_BICG_STEP", std::vector<size_t>{ 0, 1 });
+	tuner.addParameter(kernelId, "ROWS_PROCESSED", std::vector<size_t>{ 128, 256, 512, 1024 });
+	tuner.addParameter(kernelId, "TILE", std::vector<size_t>{ 16, 32, 64 });
+
+	// Specify contraints
+	// All of the parameters are used only in the fused kernel
+	auto fused = [](std::vector<size_t> vector) {return vector.at(0) == 2 || ((vector.at(0) == 0 || vector.at(0) == 1) && vector.at(1) == 4 && vector.at(2) == 1 && vector.at(3) == 1 && vector.at(4) == 1 && vector.at(5) == 1 && vector.at(6) == 1 && vector.at(7) == 1 && vector.at(8) == 1 && vector.at(9) == 512 && vector.at(10) == 32); };
+	tuner.addConstraint(kernelId, fused, std::vector<std::string>{"FUSED", "BICG_BATCH", "USE_SHARED_MATRIX", "USE_SHARED_VECTOR_1", "USE_SHARED_VECTOR_2", "USE_SHARED_REDUCTION_1", "USE_SHARED_REDUCTION_2", "ATOMICS", "UNROLL_BICG_STEP", "ROWS_PROCESSED", "TILE"});
+	// New NVidia GPUs have max. workgroup size of 1024, so   tile_x * tile_y <= 1024   ==>   tile_x * (tile_x / batch) <= 1024
+	auto maxWgSize = [](std::vector<size_t> vector) {return vector.at(0) * vector.at(0) / vector.at(1) <= MAX_WORK_GROUP_SIZE; };
+	tuner.addConstraint(kernelId, maxWgSize, std::vector<std::string>{"TILE", "BICG_BATCH"});
 
 	// Set kernel arguments for both tuned kernel and reference kernel, order of arguments is important
-	tuner.setCompositionKernelArguments(kernelId, kernelFusedId, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, x2Id, y2Id, mId, nId});
+	tuner.setCompositionKernelArguments(kernelId, kernelFusedId, { AId, x1Id, y1Id, x2Id, y2Id, mRefId, nRefId });
+	tuner.setCompositionKernelArguments(kernelId, kernelReduction1Id, std::vector<ktt::ArgumentId>{mRefId, nRefId, y1Id});
+	tuner.setCompositionKernelArguments(kernelId, kernelReduction2Id, std::vector<ktt::ArgumentId>{mRefId, nRefId, y2Id});
+	tuner.setCompositionKernelArguments(kernelId, kernelFusedRefId, { AId, x2Id, y2Id, x1Id, y1Id, nFusedRefId, mFusedRefId }); // reference fused kernel uses swapped M and N. same for x1/x2 and y1/y2
 	tuner.setCompositionKernelArguments(kernelId, kernel1Id, std::vector<ktt::ArgumentId>{AId, x1Id, y1Id, mRefId, nRefId});
 	tuner.setCompositionKernelArguments(kernelId, kernel2Id, std::vector<ktt::ArgumentId>{AId, x2Id, y2Id, mRefId, nRefId});
 
@@ -239,11 +245,11 @@ int main(int argc, char** argv)
 
 	// Specify custom tolerance threshold for validation of floating point arguments. Default threshold is 1e-4.
 	tuner.setValidationMethod(ktt::ValidationMethod::SideBySideRelativeComparison, 0.001);
-	//tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 0.0001);
-	//tuner.setValidationRange(y2Id, 10);
+	tuner.setValidationRange(y1Id, N);
+	tuner.setValidationRange(y2Id, M);
 
 	// Set tuning manipulator, which implements custom method for launching the kernel
-	tuner.setTuningManipulator(kernelId, std::make_unique<BicgManipulator>(kernel1Id, kernel2Id, kernelFusedId));
+	tuner.setTuningManipulator(kernelId, std::make_unique<BicgManipulator>(kernel1Id, kernel2Id, kernelFusedId, kernelFusedRefId, kernelReduction1Id, kernelReduction2Id));
 
 	// Set reference kernel which validates results provided by tuned kernel, provide list of arguments which will be validated
 	tuner.setReferenceClass(kernelId, std::make_unique<BicgCpu>(y1Id, y2Id, A, x1, x2, y1, y2), std::vector<ktt::ArgumentId>{y1Id, y2Id});

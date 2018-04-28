@@ -68,7 +68,7 @@ inline void atomicAdd_g_f(volatile __global float *addr, float val)
 	} while (current.u32 != expected.u32);
 }
 
-__kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __global DATA_TYPE *y1, __global DATA_TYPE *x2, __global DATA_TYPE *y2, int m, int n)
+__kernel void bicgFusedRef(__global float *A, __global float *x1, __global float *y1, __global float *x2, __global float *y2, int m, int n)
 {
 	int tx = get_local_id(0);
 	int ty = get_local_id(1);
@@ -76,9 +76,9 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 	int by = get_group_id(1);
 	int gy = get_global_size(1);
 
-	__local DATA_TYPE s_A[32][33];
-	__local DATA_TYPE s_x1[32];
-	__local DATA_TYPE s_x2[32];
+	__local float s_A[32][33];
+	__local float s_x1[32];
+	__local float s_x2[32];
 
 	float l_sum = 0.0f;
 
@@ -102,30 +102,25 @@ __kernel void bicgFusedRef(__global DATA_TYPE *A, __global DATA_TYPE *x1, __glob
 			tmp += s_A[tx][ty + j] * s_x2[ty + j];
 		s_A[tx][ty] = tmp;
 		barrier(CLK_LOCAL_MEM_FENCE);
-		//BATCH 8 code
+
 		if (ty < 2)
 			s_A[tx][ty] = tmp = tmp + s_A[tx][ty + 2];
 		barrier(CLK_LOCAL_MEM_FENCE);
 
 		if (ty == 0) {
-			//#if OPTIMIZE == 2 (atomics, no need to reduce later)
 			atomicAdd_g_f(y2 + i + tx, tmp + s_A[tx][1]);
-			//#else
-						//y2[i + tx + bx*m*gy] = tmp + s_A[tx][1];
 		}
 	}
 
 	// compute total sum
 	barrier(CLK_LOCAL_MEM_FENCE);
 	s_A[ty][tx] = l_sum;
-//BATCH 8 code
+	barrier(CLK_LOCAL_MEM_FENCE);
 	if (ty < 2) {
-		barrier(CLK_LOCAL_MEM_FENCE);
 		s_A[ty][tx] = l_sum = l_sum + s_A[ty + 2][tx];
-//end
-		if (ty == 0) {
-			barrier(CLK_LOCAL_MEM_FENCE);
-			atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
-		}
+	}
+	barrier(CLK_LOCAL_MEM_FENCE);
+	if (ty == 0) {
+		atomicAdd_g_f(y1 + bx * 32 + tx, l_sum + s_A[1][tx]);
 	}
 }
