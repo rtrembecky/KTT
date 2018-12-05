@@ -4,8 +4,8 @@
 // =================================================================================================
 
 // Reference implementation of the 2D convolution example
-__kernel void conv_reference(const int width, const int height, const __global float* src,
-                             __constant float* coeff, __global float* dest) {
+__kernel void conv_reference(const int width, const int height, const int depth,
+    const __global float* src, __constant float* coeff, __global float* dest) {
   // Thread identifiers
   const int tid_x = get_global_id(0);  // From 0 to width-1
   const int tid_y = get_global_id(1);  // From 0 to height-1

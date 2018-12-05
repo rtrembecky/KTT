@@ -40,9 +40,8 @@ inline void InitAccRegisters(float acc[WPTZ][WPTY][WPTX]) {
 // Loads data into local memory
 #if LOCAL == 2
 inline void LoadLocalFull(__local float* lmem, const int lmem_width, const int lmem_height,
-                          const __global floatvec* src, const int src_width, const int src_height,
-                          const int gid_x, const int gid_y, const int gid_z, const int lid_x,
-                          const int lid_y, const int lid_z) {
+    const __global floatvec* src, const int src_width, const int src_height, const int gid_x,
+    const int gid_y, const int gid_z, const int lid_x, const int lid_y, const int lid_z) {
 // Loop over the amount of work per thread
 #  pragma unroll
   for (int wx = 0; wx < WPTX / VECTOR; wx++) {
@@ -104,9 +103,8 @@ inline void LoadLocalFull(__local float* lmem, const int lmem_width, const int l
 // Loads data (plus the halos) into local memory
 #if LOCAL == 1
 inline void LoadLocalPlusHalo(__local float* lmem, const int lmem_width, const int lmem_height,
-                              const __global float* src, const int src_width, const int src_height,
-                              const int gid_x, const int gid_y, const int gid_z, const int lid_x,
-                              const int lid_y, const int lid_z) {
+    const __global float* src, const int src_width, const int src_height, const int gid_x,
+    const int gid_y, const int gid_z, const int lid_x, const int lid_y, const int lid_z) {
 // Loop over the amount of work per thread
 #  pragma unroll
   for (int wx = 0; wx < WPTX; wx++) {
@@ -303,8 +301,7 @@ inline void Accumulate(
 
 // Stores the result into global memory
 inline void StoreResult(__global floatvec* dest, const int width, const int height,
-                        float acc[WPTZ][WPTY][WPTX], const int gid_x, const int gid_y,
-                        const int gid_z) {
+    float acc[WPTZ][WPTY][WPTX], const int gid_x, const int gid_y, const int gid_z) {
 #pragma unroll
   for (int wx = 0; wx < WPTX / VECTOR; wx++) {
     const int gx = gid_x * WPTX / VECTOR + wx;
@@ -343,8 +340,8 @@ inline void StoreResult(__global floatvec* dest, const int width, const int heig
 
 #if ALGORITHM == 1
 #  if LOCAL == 0
-__kernel void conv(const int width, const int height, const __global float* src, COEFFTYPE coeff,
-                   __global floatvec* dest) {
+__kernel void conv(const int width, const int height, const int depth, const __global float* src,
+    COEFFTYPE coeff, __global floatvec* dest) {
   // Thread identifiers
   const int gid_x = get_global_id(0);  // From 0 to width/WPTX-1
   const int gid_y = get_global_id(1);  // From 0 to height/WPTY-1
@@ -363,8 +360,8 @@ __kernel void conv(const int width, const int height, const __global float* src,
 #  endif
 
 #  if LOCAL == 1
-__kernel void conv(const int width, const int height, const __global float* src, COEFFTYPE coeff,
-                   __global floatvec* dest) {
+__kernel void conv(const int width, const int height, const int depth, const __global float* src,
+    COEFFTYPE coeff, __global floatvec* dest) {
   // Thread identifiers
   const int gid_x = get_global_id(0);  // From 0 to width/WPTX-1
   const int gid_y = get_global_id(1);  // From 0 to height/WPTY-1
@@ -382,7 +379,7 @@ __kernel void conv(const int width, const int height, const __global float* src,
 
   // Caches data into local memory
   LoadLocalPlusHalo(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS, gid_x,
-                    gid_y, gid_z, lid_x, lid_y, lid_z);
+      gid_y, gid_z, lid_x, lid_y, lid_z);
 
   // Synchronizes all threads in a workgroup
   barrier(CLK_LOCAL_MEM_FENCE);
@@ -400,8 +397,8 @@ __kernel void conv(const int width, const int height, const __global float* src,
 #  endif  // LOCAL == 1
 
 #  if LOCAL == 2
-__kernel void conv(const int width, const int height, const __global float* src, COEFFTYPE coeff,
-                   __global floatvec* dest) {
+__kernel void conv(const int width, const int height, const int depth, const __global float* src,
+    COEFFTYPE coeff, __global floatvec* dest) {
   // Thread identifiers
   const int gid_x = get_local_id(0) + TBX * get_group_id(0);
   const int gid_y = get_local_id(1) + TBY * get_group_id(1);
@@ -419,7 +416,7 @@ __kernel void conv(const int width, const int height, const __global float* src,
 
   // Caches data into local memory
   LoadLocalFull(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS, gid_x, gid_y,
-                gid_z, lid_x, lid_y, lid_z);
+      gid_z, lid_x, lid_y, lid_z);
 
   // Synchronizes all threads in a workgroup
   barrier(CLK_LOCAL_MEM_FENCE);
@@ -445,9 +442,8 @@ __kernel void conv(const int width, const int height, const __global float* src,
 #if ALGORITHM == 2
 #  if LOCAL == 1
 inline void ShiftAndLoadNextValue(__local float* lmem, const int lmem_width, const int lmem_height,
-                                  const __global float* src, const int src_width,
-                                  const int src_height, const int gx, const int gy, const int gz,
-                                  const int lx, const int ly) {
+    const __global float* src, const int src_width, const int src_height, const int gx,
+    const int gy, const int gz, const int lx, const int ly) {
   lmem[(ly + HFS) * lmem_width + lx + HFS] =
       lmem[HFS * lmem_height * lmem_width + (ly + HFS) * lmem_width + lx + HFS];
   lmem[HFS * lmem_height * lmem_width + (ly + HFS) * lmem_width + lx + HFS] =
@@ -458,10 +454,9 @@ inline void ShiftAndLoadNextValue(__local float* lmem, const int lmem_width, con
 
 // Loads data (plus the halos) into local memory
 inline void ShiftLocalAndLoadNextHalo(__local float* lmem, const int lmem_width,
-                                      const int lmem_height, const __global float* src,
-                                      const int src_width, const int src_height, const int gid_x,
-                                      const int gid_y, const int gz, const int lid_x,
-                                      const int lid_y, const int lid_z) {
+    const int lmem_height, const __global float* src, const int src_width, const int src_height,
+    const int gid_x, const int gid_y, const int gz, const int lid_x, const int lid_y,
+    const int lid_z) {
 // Loop over the amount of work per thread
 #    pragma unroll
   for (int wy = 0; wy < WPTY; wy++) {
@@ -472,8 +467,8 @@ inline void ShiftLocalAndLoadNextHalo(__local float* lmem, const int lmem_width,
       const int lx = lid_x * WPTX + wx;
       const int gx = gid_x * WPTX + wx;
 
-      ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx, gy, gz,
-                            lx, ly);
+      ShiftAndLoadNextValue(
+          lmem, lmem_width, lmem_height, src, src_width, src_height, gx, gy, gz, lx, ly);
 
       // Computes the conditionals
       const bool low_x = lx < HFS;
@@ -483,37 +478,37 @@ inline void ShiftLocalAndLoadNextHalo(__local float* lmem, const int lmem_width,
 
       if (low_y) {
         ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx,
-                              gy - HFS, gz, lx, ly - HFS);
+            gy - HFS, gz, lx, ly - HFS);
         if (low_x)
           ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx - HFS,
-                                gy - HFS, gz, lx - HFS, ly - HFS);
+              gy - HFS, gz, lx - HFS, ly - HFS);
         if (high_x)
           ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx + HFS,
-                                gy - HFS, gz, lx + HFS, ly - HFS);
+              gy - HFS, gz, lx + HFS, ly - HFS);
       }
       if (high_y) {
         ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx,
-                              gy + HFS, gz, lx, ly + HFS);
+            gy + HFS, gz, lx, ly + HFS);
         if (low_x)
           ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx - HFS,
-                                gy + HFS, gz, lx - HFS, ly + HFS);
+              gy + HFS, gz, lx - HFS, ly + HFS);
         if (high_x)
           ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx + HFS,
-                                gy + HFS, gz, lx + HFS, ly + HFS);
+              gy + HFS, gz, lx + HFS, ly + HFS);
       }
       if (low_x)
         ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx - HFS,
-                              gy, gz, lx - HFS, ly);
+            gy, gz, lx - HFS, ly);
       if (high_x)
         ShiftAndLoadNextValue(lmem, lmem_width, lmem_height, src, src_width, src_height, gx + HFS,
-                              gy, gz, lx + HFS, ly);
+            gy, gz, lx + HFS, ly);
     }
   }
 }
 
 // requirements: TBZ == 1, WPTZ == 1, HFS == 1
 __kernel void conv(const int width, const int height, const int depth, const __global float* src,
-                   COEFFTYPE coeff, __global floatvec* dest) {
+    COEFFTYPE coeff, __global floatvec* dest) {
   // Thread identifiers
   const int gid_x = get_global_id(0);  // From 0 to width/WPTX-1
   const int gid_y = get_global_id(1);  // From 0 to height/WPTY-1
@@ -534,7 +529,7 @@ __kernel void conv(const int width, const int height, const int depth, const __g
 
   // Caches data into local memory
   LoadLocalPlusHalo(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS, gid_x,
-                    gid_y, gid_z, lid_x, lid_y, lid_z);
+      gid_y, gid_z, lid_x, lid_y, lid_z);
 
   // Synchronizes all threads in a workgroup
   barrier(CLK_LOCAL_MEM_FENCE);
@@ -553,7 +548,7 @@ __kernel void conv(const int width, const int height, const int depth, const __g
     barrier(CLK_LOCAL_MEM_FENCE);
 
     ShiftLocalAndLoadNextHalo(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS,
-                              gid_x, gid_y, gid_z + z, lid_x, lid_y, lid_z);
+        gid_x, gid_y, gid_z + z, lid_x, lid_y, lid_z);
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -572,10 +567,9 @@ __kernel void conv(const int width, const int height, const int depth, const __g
 #  if LOCAL == 2
 // Loads data (plus the halos) into local memory
 inline void ShiftLocalAndLoadNextFull(__local float* lmem, const int lmem_width,
-                                      const int lmem_height, const __global float* src,
-                                      const int src_width, const int src_height, const int gid_x,
-                                      const int gid_y, const int gz, const int lid_x,
-                                      const int lid_y, const int lid_z) {
+    const int lmem_height, const __global float* src, const int src_width, const int src_height,
+    const int gid_x, const int gid_y, const int gz, const int lid_x, const int lid_y,
+    const int lid_z) {
   float temp[WPTY][WPTX];
 // Load new local memory to registers before overwriting it
 #    pragma unroll
@@ -615,7 +609,7 @@ inline void ShiftLocalAndLoadNextFull(__local float* lmem, const int lmem_width,
 }
 
 __kernel void conv(const int width, const int height, const int depth, const __global float* src,
-                   COEFFTYPE coeff, __global floatvec* dest) {
+    COEFFTYPE coeff, __global floatvec* dest) {
   // Thread identifiers
   const int gid_x = get_local_id(0) + TBX * get_group_id(0);
   const int gid_y = get_local_id(1) + TBY * get_group_id(1);
@@ -636,7 +630,7 @@ __kernel void conv(const int width, const int height, const int depth, const __g
 
   // Caches data into local memory
   LoadLocalFull(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS, gid_x, gid_y,
-                gid_z, lid_x, lid_y, lid_z);
+      gid_z, lid_x, lid_y, lid_z);
 
   // Synchronizes all threads in a workgroup
   barrier(CLK_LOCAL_MEM_FENCE);
@@ -657,7 +651,7 @@ __kernel void conv(const int width, const int height, const int depth, const __g
     barrier(CLK_LOCAL_MEM_FENCE);
 
     ShiftLocalAndLoadNextFull(lmem, lmem_width, lmem_height, src, width + 2 * HFS, height + 2 * HFS,
-                              gid_x, gid_y, gid_z + z, lid_x, lid_y, lid_z);
+        gid_x, gid_y, gid_z + z, lid_x, lid_y, lid_z);
     barrier(CLK_LOCAL_MEM_FENCE);
 
     if (lid_x < TBX && lid_y < TBY && lid_z < TBZ) {

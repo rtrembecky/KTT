@@ -16,9 +16,9 @@
 #endif
 
 // Problem size
-#define WIDTH 256
-#define HEIGHT 128
-#define DEPTH 128
+#define WIDTH 512
+#define HEIGHT 512
+#define DEPTH 512
 
 // Half-filter and filter size - HFS > 1 not supported for Sliding plane kernel
 #define HFS 1
@@ -31,13 +31,14 @@
 // Local memory size in bytes
 #define MAX_LOCAL_MEM_SIZE 32768
 
+// Maximum register count per block
+// The constraint that uses it is very pesimistic (divides it by 4)
+#define MAX_REG_COUNT 65536
+
 class ConvolutionManipulator : public ktt::TuningManipulator {
  public:
-  ConvolutionManipulator(const ktt::KernelId blockedKernelId, const ktt::KernelId referenceKernelId,
-      const ktt::KernelId slidingPlaneKernelId)
-      : blockedKernelId(blockedKernelId),
-        referenceKernelId(referenceKernelId),
-        slidingPlaneKernelId(slidingPlaneKernelId) {}
+  ConvolutionManipulator(const ktt::KernelId convKernelId, const ktt::KernelId referenceKernelId)
+      : convKernelId(convKernelId), referenceKernelId(referenceKernelId) {}
 
   // LaunchComputation is responsible for actual execution of tuned kernel
   void launchComputation(const ktt::KernelId kernelId) override {
@@ -45,17 +46,14 @@ class ConvolutionManipulator : public ktt::TuningManipulator {
     auto algorithm = getParameterValue("ALGORITHM", parameterValues);
     if (algorithm == 0) {
       runKernel(referenceKernelId);
-    } else if (algorithm == 1) {
-      runKernel(blockedKernelId);
     } else {
-      runKernel(slidingPlaneKernelId);
+      runKernel(convKernelId);
     }
   }
 
  private:
-  ktt::KernelId blockedKernelId;
+  ktt::KernelId convKernelId;
   ktt::KernelId referenceKernelId;
-  ktt::KernelId slidingPlaneKernelId;
 };
 
 class ConvolutionCpu : public ktt::ReferenceClass {
@@ -168,17 +166,14 @@ int main(int argc, char **argv) {
   const ktt::DimensionVector workGroupDimensions;
 
   // Add 3 kernels to the tuner, one of them acts as reference kernel
-  ktt::KernelId blockedKernelId =
-      tuner.addKernelFromFile(kernelFile, "conv", ndRangeDimensions, workGroupDimensions);
-  ktt::KernelId slidingPlaneKernelId =
+  ktt::KernelId convKernelId =
       tuner.addKernelFromFile(kernelFile, "conv", ndRangeDimensions, workGroupDimensions);
   ktt::KernelId referenceKernelId = tuner.addKernelFromFile(
       referenceKernelFile, "conv_reference", ndRangeDimensions, workGroupDimensions);
   // Add a composition of the kernels, so we can choose which kernel to run in manipulator
   ktt::KernelId kernelId = tuner.addComposition("3D Convolution",
-      std::vector<ktt::KernelId>{blockedKernelId, referenceKernelId, slidingPlaneKernelId},
-      std::make_unique<ConvolutionManipulator>(
-          blockedKernelId, referenceKernelId, slidingPlaneKernelId));
+      std::vector<ktt::KernelId>{convKernelId, referenceKernelId},
+      std::make_unique<ConvolutionManipulator>(convKernelId, referenceKernelId));
 
   // Add kernel parameters.
   // ALGORITHM 0 - Reference kernel, 1 - Blocked kernel, 2 - Sliding plane kernel
@@ -217,16 +212,16 @@ int main(int argc, char **argv) {
       std::vector<std::string>{"TBX_XL", "TBX", "WPTX"}, globalModifier);
   tuner.setThreadModifier(kernelId, ktt::ModifierType::Global, ktt::ModifierDimension::Y,
       std::vector<std::string>{"TBY_XL", "TBY", "WPTY"}, globalModifier);
-  // Modify Z NDRange size for Blocked kernel
-  tuner.setCompositionKernelThreadModifier(kernelId, blockedKernelId, ktt::ModifierType::Global,
-      ktt::ModifierDimension::Z, std::vector<std::string>{"TBZ_XL", "TBZ", "WPTZ"}, globalModifier);
-  // Modify Z NDRange size for Sliding plane kernel
+  // Modify Z NDRange size for Blocked or Sliding plane kernel based on ALGORITHM parameter
   auto globalModifierZ = [](const size_t size, const std::vector<size_t> &v) {
-    return (size * v[0] / (v[1] * v[2] * v[3]));
+    if (v[4] == 2)
+      return (size * v[0] / (v[1] * v[2] * v[3]));
+    else
+      return (size * v[0] / (v[1] * v[2]));
   };
-  tuner.setCompositionKernelThreadModifier(kernelId, slidingPlaneKernelId,
-      ktt::ModifierType::Global, ktt::ModifierDimension::Z,
-      std::vector<std::string>{"TBZ_XL", "TBZ", "WPTZ", "Z_ITERATIONS"}, globalModifierZ);
+  tuner.setThreadModifier(kernelId, ktt::ModifierType::Global, ktt::ModifierDimension::Z,
+      std::vector<std::string>{"TBZ_XL", "TBZ", "WPTZ", "Z_ITERATIONS", "ALGORITHM"},
+      globalModifierZ);
 
   // Modify workgroup size for all kernels
   tuner.setThreadModifier(kernelId, ktt::ModifierType::Local, ktt::ModifierDimension::X, "TBX_XL",
@@ -269,6 +264,17 @@ int main(int argc, char **argv) {
       {"ALGORITHM", "LOCAL", "PADDING", "TBX_XL", "WPTX", "TBY_XL", "WPTY", "TBZ_XL", "WPTZ"},
       maxLocalMemSize);
 
+  // GPUs have max. register count per block
+  // As we can't know how many registers a compiler would need, the constraint is pesimistic
+  auto maxRegCount = [](const std::vector<size_t> &v) {
+    size_t accRegs = v[0] * v[1] * v[2];
+    size_t workRegs = v[3] == 0 ? 0 : (v[0] + 2 * HFS) * (v[1] + 2 * HFS) * (v[2] + 2 * HFS);
+    size_t wgSize = v[4] * v[5] * v[6];
+    return wgSize * (accRegs + workRegs) <= MAX_REG_COUNT / 4;
+  };
+  tuner.addConstraint(kernelId,
+      {"WPTX", "WPTY", "WPTZ", "CACHE_WORK_TO_REGS", "TBX_XL", "TBY_XL", "TBZ_XL"}, maxRegCount);
+
   auto reverseCacheLoopsOrder = [](const std::vector<size_t> &v) { return v[0] == 1 || v[1] == 0; };
   tuner.addConstraint(
       kernelId, {"CACHE_WORK_TO_REGS", "REVERSE_LOOP_ORDER3"}, reverseCacheLoopsOrder);
@@ -292,7 +298,7 @@ int main(int argc, char **argv) {
     else if (v[0] == 1)
       return true;
     // Set TBZ to 1, WPTZ to 1, and LOCAL to 1/2 for Sliding plane kernel (ALGORITHM == 2)
-    else // v[0] == 2
+    else  // v[0] == 2
       return (v[3] == 1 && v[6] == 1 && v[7] != 0);
   };
   tuner.addConstraint(kernelId,
@@ -314,18 +320,15 @@ int main(int argc, char **argv) {
 
   // Set kernel arguments for both tuned kernel and reference kernel
   tuner.setKernelArguments(
-      kernelId, std::vector<ktt::ArgumentId>{widthId, heightId, srcId, coeffId, destId});
-  // Rewrite arguments for Sliding plane kernel (needs depth as well)
-  tuner.setCompositionKernelArguments(
-      kernelId, slidingPlaneKernelId, {widthId, heightId, depthId, srcId, coeffId, destId});
+      kernelId, std::vector<ktt::ArgumentId>{widthId, heightId, depthId, srcId, coeffId, destId});
 
   // Specify custom tolerance threshold for validation of floating point arguments. Default
   // threshold is 1e-4.
   tuner.setValidationMethod(ktt::ValidationMethod::SideBySideComparison, 0.001f);
 
   // Set tuning manipulator
-  tuner.setTuningManipulator(kernelId, std::make_unique<ConvolutionManipulator>(blockedKernelId,
-                                           referenceKernelId, slidingPlaneKernelId));
+  tuner.setTuningManipulator(
+      kernelId, std::make_unique<ConvolutionManipulator>(convKernelId, referenceKernelId));
 
   // Set reference kernel which validates results provided by tuned kernel, provide list of
   // arguments which will be validated
