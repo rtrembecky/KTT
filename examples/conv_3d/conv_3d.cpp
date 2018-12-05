@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
   tuner.addParameter(kernelId, "WPTZ", {1, 2, 4, 8});
   tuner.addParameter(kernelId, "VECTOR", {1, 2, 4});
   tuner.addParameter(kernelId, "UNROLL_FACTOR", {1, FS});
-  tuner.addParameter(kernelId, "CONSTANT_COEFF", {0, 1});
+  tuner.addParameter(kernelId, "CONSTANT_COEFF", {/* 0, */ 1});
   tuner.addParameter(kernelId, "CACHE_WORK_TO_REGS", {0, 1});
   tuner.addParameter(kernelId, "REVERSE_LOOP_ORDER", {0, 1});
   tuner.addParameter(kernelId, "REVERSE_LOOP_ORDER2", {0, 1});
