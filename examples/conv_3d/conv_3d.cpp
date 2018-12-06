@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
   // Add kernel parameters.
   // ALGORITHM 0 - Reference kernel, 1 - Blocked kernel, 2 - Sliding plane kernel
   tuner.addParameter(kernelId, "ALGORITHM", {0, 1 /* , 2 */});
-  tuner.addParameter(kernelId, "TBX", {/* 8, 16, */ 32, 64});
+  tuner.addParameter(kernelId, "TBX", {8, 16 /* , 32, 64 */});
   tuner.addParameter(kernelId, "TBY", {4, 8, 16, 32});
   tuner.addParameter(kernelId, "TBZ", {1, 2 /* , 4, 8 */});
   tuner.addParameter(kernelId, "LOCAL", {0, /* 1, */ 2});
