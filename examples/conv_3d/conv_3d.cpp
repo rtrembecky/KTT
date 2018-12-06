@@ -169,13 +169,13 @@ int main(int argc, char **argv) {
 
   // Kernel dimensions
   const ktt::DimensionVector ndRangeDimensions(WIDTH, HEIGHT, DEPTH);
-  const ktt::DimensionVector workGroupDimensions;
+  const ktt::DimensionVector dummyWorkGroupDimensions(1, 1, 1);
 
   // Add 3 kernels to the tuner, one of them acts as reference kernel
   ktt::KernelId convKernelId =
-      tuner.addKernelFromFile(kernelFile, "conv", ndRangeDimensions, workGroupDimensions);
+      tuner.addKernelFromFile(kernelFile, "conv", ndRangeDimensions, dummyWorkGroupDimensions);
   ktt::KernelId referenceKernelId = tuner.addKernelFromFile(
-      referenceKernelFile, "conv_reference", ndRangeDimensions, workGroupDimensions);
+      referenceKernelFile, "conv_reference", ndRangeDimensions, dummyWorkGroupDimensions);
   // Add a composition of the kernels, so we can choose which kernel to run in manipulator
   ktt::KernelId kernelId = tuner.addComposition("3D Convolution",
       std::vector<ktt::KernelId>{convKernelId, referenceKernelId},
