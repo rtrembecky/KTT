@@ -28,12 +28,18 @@
 // My Intel(R) HD Graphics Kabylake ULT GT2 has max of 512
 #define MAX_WORK_GROUP_SIZE 1024
 
+// Don't try too small blocks
+#define MIN_WORK_GROUP_SIZE 32
+
 // Local memory size in bytes
 #define MAX_LOCAL_MEM_SIZE 32768
 
 // Maximum register count per block
 // The constraint that uses it is very pesimistic (divides it by 4)
 #define MAX_REG_COUNT 65536
+
+// Maximum work per thread
+#define MAX_WORK_PER_THREAD 64
 
 class ConvolutionManipulator : public ktt::TuningManipulator {
  public:
@@ -178,11 +184,11 @@ int main(int argc, char **argv) {
   // Add kernel parameters.
   // ALGORITHM 0 - Reference kernel, 1 - Blocked kernel, 2 - Sliding plane kernel
   tuner.addParameter(kernelId, "ALGORITHM", {0, 1, 2});
-  tuner.addParameter(kernelId, "TBX", {8, 16, 32, 64});
-  tuner.addParameter(kernelId, "TBY", {8, 16, 32, 64});
-  tuner.addParameter(kernelId, "TBZ", {1, 2, 4, 8, 16, 32});
+  tuner.addParameter(kernelId, "TBX", {8, 16, 32, 64, 128});
+  tuner.addParameter(kernelId, "TBY", {1, 2, 4, 8, 16});
+  tuner.addParameter(kernelId, "TBZ", {1, 2, 4, 8});
   tuner.addParameter(kernelId, "LOCAL", {0, 1, 2});
-  tuner.addParameter(kernelId, "WPTX", {1, 2, 4, 8});
+  tuner.addParameter(kernelId, "WPTX", {1, 2, 4});
   tuner.addParameter(kernelId, "WPTY", {1, 2, 4, 8});
   tuner.addParameter(kernelId, "WPTZ", {1, 2, 4, 8});
   tuner.addParameter(kernelId, "VECTOR", {1, 2, 4});
@@ -198,7 +204,8 @@ int main(int argc, char **argv) {
   // Introduces a helper parameter to compute the proper number of threads for the LOCAL == 2 case.
   // In this case, the workgroup size (TBX by TBY) is extra large (TBX_XL by TBY_XL) because it uses
   // extra (halo) threads only to load the padding to local memory - they don't compute.
-  std::vector<size_t> integers{1, 2, 3, 4, 8, 9, 10, 16, 17, 18, 32, 33, 34, 64, 65, 66};
+  std::vector<size_t> integers{
+      1, 2, 3, 4, 5, 6, 8, 9, 10, 16, 17, 18, 32, 33, 34, 64, 65, 66, 128, 129, 130};
 
   tuner.addParameter(kernelId, "TBX_XL", integers);
   tuner.addParameter(kernelId, "TBY_XL", integers);
@@ -246,19 +253,25 @@ int main(int argc, char **argv) {
   auto padding = [](const std::vector<size_t> &v) { return (v[0] != 0 || v[1] == 0); };
   tuner.addConstraint(kernelId, {"LOCAL", "PADDING"}, padding);
 
-  // GPUs have max. workgroup size
-  auto maxWgSize = [](const std::vector<size_t> &v) {
-    return v[0] * v[1] * v[2] <= MAX_WORK_GROUP_SIZE;
+  // GPUs have max. workgroup size, but keep the blocks at least MIN_WORK_GROUP_SIZE large
+  auto minAndmaxWgSize = [](const std::vector<size_t> &v) {
+    return v[0] * v[1] * v[2] <= MAX_WORK_GROUP_SIZE && v[0] * v[1] * v[2] >= MIN_WORK_GROUP_SIZE;
   };
-  tuner.addConstraint(kernelId, {"TBX_XL", "TBY_XL", "TBZ_XL"}, maxWgSize);
+  tuner.addConstraint(kernelId, {"TBX_XL", "TBY_XL", "TBZ_XL"}, minAndmaxWgSize);
+
+  auto maxWorkPerThread = [](const std::vector<size_t> &v) {
+    return v[0] * v[1] * v[2] <= MAX_WORK_PER_THREAD;
+  };
+  tuner.addConstraint(kernelId, {"WPTX", "WPTY", "WPTZ"}, maxWorkPerThread);
 
   // GPUs have max. local memory size
   auto maxLocalMemSize = [](const std::vector<size_t> &v) {
     size_t haloXY = v[1] == 1 ? 2 * HFS : 0;
     size_t haloZ = v[0] == 2 || v[1] == 1 ? 2 * HFS : 0;
-    return v[1] == 0 || (v[3] * v[4] + haloXY + v[2]) * (v[5] * v[6] + haloXY) *
-                                (v[7] * v[8] + haloZ) * sizeof(float) <=
-                            MAX_LOCAL_MEM_SIZE;
+    return v[0] == 0 || v[1] == 0 ||
+           (v[3] * v[4] + haloXY + v[2]) * (v[5] * v[6] + haloXY) * (v[7] * v[8] + haloZ) *
+                   sizeof(float) <=
+               MAX_LOCAL_MEM_SIZE;
   };
   tuner.addConstraint(kernelId,
       {"ALGORITHM", "LOCAL", "PADDING", "TBX_XL", "WPTX", "TBY_XL", "WPTY", "TBZ_XL", "WPTZ"},
