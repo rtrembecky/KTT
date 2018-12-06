@@ -31,6 +31,13 @@ function findLibrariesAmd()
 end
 
 function findLibrariesIntel()
+    if not _OPTIONS["no-opencl"] then
+        opencl_projects = true
+        defines { "KTT_PLATFORM_OPENCL" }
+        links { "OpenCL" }
+        return true
+    end
+    
     local path = os.getenv("INTELOCLSDKROOT")
     
     if not path then
