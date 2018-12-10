@@ -29,7 +29,7 @@
 #define MAX_WORK_GROUP_SIZE 1024
 
 // Don't try too small blocks
-#define MIN_WORK_GROUP_SIZE 32
+#define MIN_WORK_GROUP_SIZE 64
 
 // Local memory size in bytes
 #define MAX_LOCAL_MEM_SIZE 32768
@@ -287,6 +287,17 @@ int main(int argc, char **argv) {
   };
   tuner.addConstraint(kernelId,
       {"WPTX", "WPTY", "WPTZ", "CACHE_WORK_TO_REGS", "TBX_XL", "TBY_XL", "TBZ_XL"}, maxRegCount);
+
+  // TUNING SPACE REDUCTION
+  // As the tuning space is very large, I cut it based on some pre-tuning
+  // - it seems that the LOCAL == 0 cases prefer higher TBX, where LOCAL == 1|2 use lower values.
+  auto localAndTBX = [](const std::vector<size_t> &v) {
+    if (v[0] == 0)
+      return v[1] >= 32;
+    else  // v[0] == 1|2
+      return v[1] <= 32;
+  };
+  tuner.addConstraint(kernelId, {"LOCAL", "TBX"}, localAndTBX);
 
   auto reverseCacheLoopsOrder = [](const std::vector<size_t> &v) { return v[0] == 1 || v[1] == 0; };
   tuner.addConstraint(
